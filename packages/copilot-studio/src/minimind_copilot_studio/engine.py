@@ -64,6 +64,8 @@ class CopilotInferenceEngine:
     ) -> "CopilotInferenceEngine":
         """Standalone factory: downloads any missing checkpoints from HF Hub and registers all 4 stages."""
         os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        warnings.filterwarnings("ignore", category=SyntaxWarning)
         if minimind_dir not in sys.path:
             sys.path.insert(0, minimind_dir)
 
