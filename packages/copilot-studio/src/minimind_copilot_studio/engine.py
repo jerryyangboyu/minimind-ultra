@@ -101,8 +101,8 @@ class CopilotInferenceEngine:
                 hf_hub_download(
                     repo_id=hf_repo_id,
                     repo_type="model",
-                    filename=fname,
-                    local_dir=out_dir,
+                    filename=f"out/{fname}",
+                    local_dir=minimind_dir,
                     token=hf_token,
                 )
 
