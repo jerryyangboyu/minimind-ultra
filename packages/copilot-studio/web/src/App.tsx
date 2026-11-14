@@ -32,8 +32,15 @@ const DEFAULT_PRESETS: PresetItem[] = [
     suffix: "",
   },
   {
+    id: "matmul_bare",
+    title: "4. Matrix Multiply (Bare Signature, OOD)",
+    mode: "sft",
+    prefix: "def matmul(mat1, mat2):\n    ",
+    suffix: "",
+  },
+  {
     id: "fim_is_even",
-    title: "4. Fill-in-the-Middle (Cursor Inside Function)",
+    title: "5. Fill-in-the-Middle (Cursor Inside Function)",
     mode: "fim",
     prefix:
       'def is_even(n):\n    """Return True if n is even, else False."""\n    return ',
@@ -128,11 +135,14 @@ export const App: React.FC = () => {
 
   const handleAcceptIntoEditor = (m: ModelCompletionResult) => {
     if (!m.text) return;
-    const sep =
-      code.endsWith("\n") || m.text.startsWith("\n") ? "" : "\n";
-    const merged =
-      code + sep + m.text + (mode === "fim" ? suffix : "\n");
-    setCode(merged);
+    if (mode === "fim") {
+      setCode(code + m.text + suffix);
+    } else {
+      const cleanPrefix = code.replace(/[ \t]+$/, "");
+      const sep =
+        cleanPrefix.endsWith("\n") || m.text.startsWith("\n") ? "" : "\n";
+      setCode(cleanPrefix + sep + m.text + "\n");
+    }
   };
 
   const selectedModel =

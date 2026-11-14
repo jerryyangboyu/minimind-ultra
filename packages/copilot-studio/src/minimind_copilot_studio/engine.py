@@ -169,7 +169,7 @@ class CopilotInferenceEngine:
         model: Any,
         ids: list[int],
         max_new_tokens: int,
-        repetition_penalty: float = 1.12,
+        repetition_penalty: float = 1.02,
     ) -> str:
         x = torch.tensor([ids], device=self.device)
         saved = model.lm_head.weight.data[self.fim_ids].clone()
@@ -194,7 +194,9 @@ class CopilotInferenceEngine:
         ids = [self.bos_id] + self.tokenizer(
             prefix, add_special_tokens=False
         ).input_ids
-        return self._generate_raw(model, ids, max_new_tokens=max_new_tokens)
+        return self._generate_raw(
+            model, ids, max_new_tokens=max_new_tokens, repetition_penalty=1.08
+        )
 
     def default_fim_complete(
         self, model: Any, prefix: str, suffix: str, max_new_tokens: int = 48
@@ -203,16 +205,22 @@ class CopilotInferenceEngine:
         ids = [self.bos_id] + self.tokenizer(
             prompt, add_special_tokens=False
         ).input_ids
-        return self._generate_raw(model, ids, max_new_tokens=max_new_tokens)
+        return self._generate_raw(
+            model, ids, max_new_tokens=max_new_tokens, repetition_penalty=1.05
+        )
 
     def default_sft_complete(
         self, model: Any, header: str, max_new_tokens: int = 96
     ) -> str:
-        prompt = f"<|im_start|>user\n{header}<|im_end|>\n<|im_start|>assistant\n"
+        clean_header = header.rstrip(" \t\n") + "\n"
+        prompt = f"<|im_start|>user\n{clean_header}<|im_end|>\n<|im_start|>assistant"
         ids = self.tokenizer(prompt, add_special_tokens=False).input_ids
-        text = self._generate_raw(model, ids, max_new_tokens=max_new_tokens)
+        text = self._generate_raw(
+            model, ids, max_new_tokens=max_new_tokens, repetition_penalty=1.02
+        )
         if "</think>" in text:
-            text = text.split("</think>", 1)[1].lstrip("\n")
+            text = text.split("</think>", 1)[1]
+        text = text.lstrip("\n")
         if text and not text[0].isspace():
             text = "    " + text
         return text
@@ -255,6 +263,8 @@ class CopilotInferenceEngine:
     ) -> dict[str, Any]:
         """Run code completion across all registered checkpoints and return structured metrics."""
         models_out: list[dict[str, Any]] = []
+        clean_prefix = prefix.rstrip(" \t\n") + "\n"
+        trailing_indent = prefix.split("\n")[-1] if not prefix.split("\n")[-1].strip() else ""
         for spec in self.checkpoints:
             t0 = time.perf_counter()
             if mode == "fim":
@@ -264,16 +274,20 @@ class CopilotInferenceEngine:
                 candidate = prefix + text + suffix
             elif mode == "sft" and spec.supports_sft_template:
                 text = self._sft_complete_fn(
-                    spec.model, prefix, max_new_tokens=max_new_tokens
+                    spec.model, clean_prefix, max_new_tokens=max_new_tokens
                 )
-                sep = "" if (prefix.endswith("\n") or text.startswith("\n")) else "\n"
-                candidate = prefix + sep + text
+                candidate = clean_prefix + text.lstrip("\n")
             else:
-                text = self._complete_fn(
+                raw_text = self._complete_fn(
                     spec.model, prefix, max_new_tokens=max_new_tokens
                 )
-                sep = "" if (prefix.endswith("\n") or text.startswith("\n")) else "\n"
-                candidate = prefix + sep + text
+                if trailing_indent:
+                    candidate = prefix + raw_text
+                    text = trailing_indent + raw_text.lstrip(" ")
+                else:
+                    sep = "" if (prefix.endswith("\n") or raw_text.startswith("\n")) else "\n"
+                    candidate = prefix + sep + raw_text
+                    text = raw_text.lstrip("\n")
 
             latency_ms = int((time.perf_counter() - t0) * 1000)
             n_tokens = len(

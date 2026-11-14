@@ -7,8 +7,11 @@ from datasets import load_dataset, Features, Sequence, Value
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def pre_processing_chat(conversations, add_system_ratio=0.2):
-    # tool use 数据完整保留不做处理
+    # tool use 或代码补全数据保持纯净，不随机注入聊天 system prompt
     if any(conv.get('tools') for conv in conversations): return conversations
+    first_content = (conversations[0].get('content') or '').lstrip() if conversations else ''
+    if first_content.startswith(('def ', 'async def ', 'class ', 'import ', 'from ', '@')):
+        return conversations
 
     SYSTEM_PROMPTS = [
         "你是一个知识丰富的AI，尽力为用户提供准确的信息。",
@@ -29,9 +32,11 @@ def pre_processing_chat(conversations, add_system_ratio=0.2):
     return conversations
 
 def post_processing_chat(prompt_content, empty_think_ratio=0.2, remove_empty_think=None):
-    # 以80%概率移除空思考标签
+    # 代码补全任务默认移除空思考标签；普通对话以80%概率移除空思考标签
     if '<think>\n\n</think>\n\n' in prompt_content:
-        if remove_empty_think is None:
+        if '<|im_start|>user\ndef ' in prompt_content or '<|im_start|>user\nclass ' in prompt_content or '<|im_start|>user\nimport ' in prompt_content:
+            remove_empty_think = True
+        elif remove_empty_think is None:
             remove_empty_think = random.random() > empty_think_ratio
         if remove_empty_think:
             prompt_content = prompt_content.replace('<think>\n\n</think>\n\n', '')
@@ -66,6 +71,7 @@ class SFTDataset(Dataset):
         features = Features({'conversations': [{'role': Value('string'), 'content': Value('string'), 'reasoning_content': Value('string'), 'tools': Value('string'), 'tool_calls': Value('string')}]})
         self.samples = load_dataset('json', data_files=jsonl_path, split='train', features=features)
         self.bos_id = tokenizer(f'{tokenizer.bos_token}assistant\n', add_special_tokens=False).input_ids
+        self.bos_prefix_id = tokenizer(f'{tokenizer.bos_token}assistant', add_special_tokens=False).input_ids
         self.eos_id = tokenizer(f'{tokenizer.eos_token}\n', add_special_tokens=False).input_ids
 
     def __len__(self):
@@ -94,16 +100,19 @@ class SFTDataset(Dataset):
         while i < len(input_ids):
             if input_ids[i:i + len(self.bos_id)] == self.bos_id:
                 start = i + len(self.bos_id)
-                end = start
-                while end < len(input_ids):
-                    if input_ids[end:end + len(self.eos_id)] == self.eos_id:
-                        break
-                    end += 1
-                for j in range(start, min(end + len(self.eos_id), self.max_length)):
-                    labels[j] = input_ids[j]
-                i = end + len(self.eos_id) if end < len(input_ids) else len(input_ids)
+            elif input_ids[i:i + len(self.bos_prefix_id)] == self.bos_prefix_id:
+                start = i + len(self.bos_prefix_id)
             else:
                 i += 1
+                continue
+            end = start
+            while end < len(input_ids):
+                if input_ids[end:end + len(self.eos_id)] == self.eos_id:
+                    break
+                end += 1
+            for j in range(start, min(end + len(self.eos_id), self.max_length)):
+                labels[j] = input_ids[j]
+            i = end + len(self.eos_id) if end < len(input_ids) else len(input_ids)
         return labels
 
     def __getitem__(self, index):
