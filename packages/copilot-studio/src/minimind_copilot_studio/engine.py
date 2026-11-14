@@ -210,7 +210,7 @@ class CopilotInferenceEngine:
         )
 
     def default_sft_complete(
-        self, model: Any, header: str, max_new_tokens: int = 96
+        self, model: Any, header: str, max_new_tokens: int = 144
     ) -> str:
         clean_header = header.rstrip(" \t\n") + "\n"
         prompt = f"<|im_start|>user\n{clean_header}<|im_end|>\n<|im_start|>assistant"
@@ -259,7 +259,7 @@ class CopilotInferenceEngine:
         prefix: str,
         mode: str = "sft",
         suffix: str = "",
-        max_new_tokens: int = 64,
+        max_new_tokens: int = 144,
     ) -> dict[str, Any]:
         """Run code completion across all registered checkpoints and return structured metrics."""
         models_out: list[dict[str, Any]] = []

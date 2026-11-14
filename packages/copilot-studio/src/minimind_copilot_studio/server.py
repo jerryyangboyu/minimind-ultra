@@ -28,7 +28,7 @@ def create_app(engine: CopilotInferenceEngine) -> Any:
         prefix: str
         mode: str = "sft"
         suffix: str = ""
-        max_new_tokens: int = 64
+        max_new_tokens: int = 144
 
     app = FastAPI(title="MiniMind Copilot Studio API", version="0.1.0")
     app.add_middleware(
