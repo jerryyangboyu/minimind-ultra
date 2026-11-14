@@ -205,14 +205,22 @@ class CopilotInferenceEngine:
         ids = [self.bos_id] + self.tokenizer(
             prompt, add_special_tokens=False
         ).input_ids
-        return self._generate_raw(
+        text = self._generate_raw(
             model, ids, max_new_tokens=max_new_tokens, repetition_penalty=1.05
         )
+        for stop_seq in ("\n\ndef ", "\n\nclass ", "\n\nprint(", "\n\nif __name__"):
+            if stop_seq in text:
+                text = text.split(stop_seq, 1)[0]
+        return text.rstrip("\n")
 
     def default_fim_sft_complete(
         self, model: Any, prefix: str, suffix: str, max_new_tokens: int = 64
     ) -> str:
-        fim_prompt = f"{FIM_PREFIX}{prefix}{FIM_SUFFIX}{suffix}{FIM_MIDDLE}"
+        last_nl = prefix.rfind("\n")
+        line_prefix = prefix[last_nl + 1 :] if last_nl != -1 else prefix
+        # Normalize line-boundary prefix to match SFT FIM training split
+        norm_prefix = prefix[: last_nl + 1] if last_nl != -1 else ""
+        fim_prompt = f"{FIM_PREFIX}{norm_prefix}{FIM_SUFFIX}{suffix.lstrip(chr(10))}{FIM_MIDDLE}"
         prompt = f"<|im_start|>user\n{fim_prompt}\n<|im_end|>\n<|im_start|>assistant"
         ids = self.tokenizer(prompt, add_special_tokens=False).input_ids
         text = self._generate_raw(
@@ -220,8 +228,17 @@ class CopilotInferenceEngine:
         )
         if "</think>" in text:
             text = text.split("</think>", 1)[1]
-        if text.startswith("\n"):
-            text = text[1:]
+        text = text.strip("\n")
+        if line_prefix.strip():
+            # Cursor is after partial tokens on the line (e.g. "    return ")
+            stripped_text = text.lstrip()
+            stripped_lp = line_prefix.strip()
+            if stripped_text.startswith(stripped_lp):
+                text = stripped_text[len(stripped_lp) :].lstrip(" ")
+        elif line_prefix:
+            # Cursor is after indentation spaces (e.g. "    ")
+            if text.startswith(line_prefix):
+                text = text[len(line_prefix) :]
         return text.rstrip("\n")
 
     def default_sft_complete(

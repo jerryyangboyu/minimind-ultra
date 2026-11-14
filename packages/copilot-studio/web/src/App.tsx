@@ -42,11 +42,10 @@ const DEFAULT_PRESETS: PresetItem[] = [
     suffix: "\n\nprint(is_even(4))\n",
   },
   {
-    id: "fim_clamp",
-    title: "6. Fill-in-the-Middle: clamp (Cursor in Middle Line → Auto FIM)",
-    prefix:
-      'def clamp(x, low, high):\n    """Clamp x to the closed interval [low, high]."""\n    if x < low:\n        return low\n    ',
-    suffix: "\n    return x\n",
+    id: "fim_factorial",
+    title: "6. Fill-in-the-Middle: factorial Base Case (Cursor in Middle → Auto FIM)",
+    prefix: "def factorial(n):\n    if n == 0:\n        ",
+    suffix: "\n    return n * factorial(n - 1)\n",
   },
 ];
 
