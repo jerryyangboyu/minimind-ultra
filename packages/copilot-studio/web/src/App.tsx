@@ -10,41 +10,43 @@ import {
 const DEFAULT_PRESETS: PresetItem[] = [
   {
     id: "factorial",
-    title: "1. Factorial (Docstring → Body)",
-    mode: "sft",
+    title: "1. Factorial (Cursor at End → Auto Completion)",
     prefix:
       'def factorial(n):\n    """Calculate the factorial of a non-negative integer n."""\n    ',
     suffix: "",
   },
   {
     id: "reverse_string",
-    title: "2. Reverse String (Docstring → Body)",
-    mode: "sft",
+    title: "2. Reverse String (Cursor at End → Auto Completion)",
     prefix: 'def reverse_string(s):\n    """Reverse a given string."""\n    ',
     suffix: "",
   },
   {
     id: "remove_duplicates",
-    title: "3. Remove Duplicates Preserving Order",
-    mode: "sft",
+    title: "3. Remove Duplicates (Cursor at End → Auto Completion)",
     prefix:
       'def remove_duplicates(items):\n    """Remove duplicate elements from a list while preserving order."""\n    ',
     suffix: "",
   },
   {
     id: "matmul_bare",
-    title: "4. Matrix Multiply (Bare Signature, OOD)",
-    mode: "sft",
+    title: "4. Matrix Multiply (Bare Signature → Auto Completion)",
     prefix: "def matmul(mat1, mat2):\n    ",
     suffix: "",
   },
   {
     id: "fim_is_even",
-    title: "5. Fill-in-the-Middle (Cursor Inside Function)",
-    mode: "fim",
+    title: "5. Fill-in-the-Middle: is_even (Cursor Inside Function → Auto FIM)",
     prefix:
       'def is_even(n):\n    """Return True if n is even, else False."""\n    return ',
     suffix: "\n\nprint(is_even(4))\n",
+  },
+  {
+    id: "fim_clamp",
+    title: "6. Fill-in-the-Middle: clamp (Cursor in Middle Line → Auto FIM)",
+    prefix:
+      'def clamp(x, low, high):\n    """Clamp x to the closed interval [low, high]."""\n    if x < low:\n        return low\n    ',
+    suffix: "\n    return x\n",
   },
 ];
 
@@ -56,10 +58,7 @@ async function requestCompletion(
   const cfg = window.__MINIMIND_STUDIO_CONFIG__;
   const cbName = cfg?.colabCallbackName;
 
-  if (
-    cbName &&
-    window.google?.colab?.kernel?.invokeFunction
-  ) {
+  if (cbName && window.google?.colab?.kernel?.invokeFunction) {
     const res = await window.google.colab.kernel.invokeFunction(
       cbName,
       [prefix, mode, suffix],
@@ -86,25 +85,48 @@ async function requestCompletion(
 export const App: React.FC = () => {
   const presets =
     window.__MINIMIND_STUDIO_CONFIG__?.presets || DEFAULT_PRESETS;
+  const initialDoc = presets[0].prefix + (presets[0].suffix || "");
+  const initialOffset = presets[0].prefix.length;
+
   const [selectedPresetId, setSelectedPresetId] = useState<string>(
     presets[0].id
   );
-  const [mode, setMode] = useState<CompletionMode>(presets[0].mode);
-  const [code, setCode] = useState<string>(presets[0].prefix);
-  const [suffix, setSuffix] = useState<string>(presets[0].suffix);
+  const [code, setCode] = useState<string>(initialDoc);
+  const [cursorOffset, setCursorOffset] = useState<number>(initialOffset);
+  const [cursorLineCol, setCursorLineCol] = useState<{ line: number; col: number }>({
+    line: presets[0].prefix.split("\n").length,
+    col: (presets[0].prefix.split("\n").pop()?.length || 0) + 1,
+  });
   const [models, setModels] = useState<ModelCompletionResult[]>([]);
   const [activeModelKey, setActiveModelKey] = useState<string>("sft");
   const [loading, setLoading] = useState<boolean>(false);
   const [status, setStatus] = useState<string>("Ready");
 
+  const prefix = code.slice(0, cursorOffset);
+  const suffix = code.slice(cursorOffset);
+  const detectedMode: "completion" | "fim" =
+    suffix.trim().length > 0 ? "fim" : "completion";
+
   const runInference = useCallback(
-    async (curCode: string, curMode: CompletionMode, curSuffix: string) => {
+    async (curDoc: string, curOffset: number) => {
+      const curPrefix = curDoc.slice(0, curOffset);
+      const curSuffix = curDoc.slice(curOffset);
+      const autoMode: CompletionMode =
+        curSuffix.trim().length > 0 ? "fim" : "completion";
       setLoading(true);
-      setStatus("Running GPU inference across 4 checkpoints...");
+      setStatus(
+        `Running GPU inference (${
+          autoMode === "fim" ? "Fill-in-the-Middle" : "Completion"
+        } at cursor)...`
+      );
       try {
-        const res = await requestCompletion(curCode, curMode, curSuffix);
+        const res = await requestCompletion(curPrefix, autoMode, curSuffix);
         setModels(res.models || []);
-        setStatus("Live GPU completions updated");
+        setStatus(
+          `Updated • Auto Mode: ${
+            autoMode === "fim" ? "Fill-in-the-Middle (FIM)" : "Completion"
+          }`
+        );
       } catch (err: any) {
         setStatus(`Inference error: ${err?.message || String(err)}`);
       } finally {
@@ -116,7 +138,7 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      runInference(code, mode, suffix);
+      runInference(code, cursorOffset);
     }, 350);
     return () => clearTimeout(timer);
   }, []);
@@ -126,22 +148,33 @@ export const App: React.FC = () => {
     setSelectedPresetId(id);
     const found = presets.find((p) => p.id === id);
     if (found) {
-      setCode(found.prefix);
-      setMode(found.mode);
-      setSuffix(found.suffix);
-      runInference(found.prefix, found.mode, found.suffix);
+      const fullDoc = found.prefix + (found.suffix || "");
+      const targetOffset = found.prefix.length;
+      const lines = found.prefix.split("\n");
+      setCode(fullDoc);
+      setCursorOffset(targetOffset);
+      setCursorLineCol({
+        line: lines.length,
+        col: (lines[lines.length - 1]?.length || 0) + 1,
+      });
+      runInference(fullDoc, targetOffset);
     }
   };
 
   const handleAcceptIntoEditor = (m: ModelCompletionResult) => {
     if (!m.text) return;
-    if (mode === "fim") {
-      setCode(code + m.text + suffix);
+    if (detectedMode === "fim") {
+      const nextDoc = prefix + m.text + suffix;
+      const nextOffset = prefix.length + m.text.length;
+      setCode(nextDoc);
+      setCursorOffset(nextOffset);
     } else {
-      const cleanPrefix = code.replace(/[ \t]+$/, "");
+      const cleanPrefix = prefix.replace(/[ \t]+$/, "");
       const sep =
         cleanPrefix.endsWith("\n") || m.text.startsWith("\n") ? "" : "\n";
-      setCode(cleanPrefix + sep + m.text + "\n");
+      const inserted = cleanPrefix + sep + m.text + "\n";
+      setCode(inserted + suffix);
+      setCursorOffset(inserted.length);
     }
   };
 
@@ -157,7 +190,7 @@ export const App: React.FC = () => {
             <span className="mm-chip mm-chip-accent">React + Monaco IDE</span>
           </div>
           <div className="mm-studio-subtitle">
-            Compare General Base, Code Base, Full-FT SFT, and LoRA checkpoints live on your GPU (Press <code>Alt+Enter</code> in editor)
+            Move your cursor anywhere and press <code>Alt+Enter</code> (or click Complete) — mode is auto-judged by cursor position
           </div>
         </div>
         <div className="mm-studio-controls">
@@ -173,22 +206,25 @@ export const App: React.FC = () => {
             ))}
           </select>
 
-          <select
-            className="mm-select"
-            value={mode}
-            onChange={(e) => setMode(e.target.value as CompletionMode)}
+          <span
+            className={`mm-mode-indicator ${
+              detectedMode === "fim"
+                ? "mm-mode-indicator-fim"
+                : "mm-mode-indicator-comp"
+            }`}
+            title="Automatically detected from cursor position: if code exists below the cursor, Fill-in-the-Middle (FIM) is used; otherwise End-of-File Completion is used."
           >
-            <option value="sft">Mode: Docstring → Body (SFT / LoRA)</option>
-            <option value="l2r">Mode: Left-to-Right Continuation</option>
-            <option value="fim">Mode: Fill-in-the-Middle (FIM)</option>
-          </select>
+            {detectedMode === "fim"
+              ? "⚡ Auto Mode: Fill-in-the-Middle (FIM)"
+              : "⚡ Auto Mode: Completion"}
+          </span>
 
           <button
             className="mm-btn mm-btn-primary"
             disabled={loading}
-            onClick={() => runInference(code, mode, suffix)}
+            onClick={() => runInference(code, cursorOffset)}
           >
-            {loading ? "⏳ Running..." : "✨ Complete Code"}
+            {loading ? "⏳ Running..." : "✨ Complete at Cursor"}
           </button>
         </div>
       </header>
@@ -196,27 +232,29 @@ export const App: React.FC = () => {
       <div className="mm-studio-body">
         <div className="mm-editor-pane">
           <div className="mm-pane-bar">
-            <span>VS Code Monaco Editor (Python 3)</span>
+            <span>
+              VS Code Monaco Editor •{" "}
+              <code>
+                Ln {cursorLineCol.line}, Col {cursorLineCol.col}
+              </code>{" "}
+              ({suffix.trim().length > 0 ? "code below cursor → FIM" : "cursor at end → Completion"})
+            </span>
             <span className="mm-status-text">{status}</span>
           </div>
           <MonacoEditor
             value={code}
-            onChange={setCode}
-            onTriggerComplete={() => runInference(code, mode, suffix)}
-            height={mode === "fim" ? 215 : 285}
+            cursorOffset={cursorOffset}
+            onChange={(nextVal, nextOff) => {
+              setCode(nextVal);
+              setCursorOffset(nextOff);
+            }}
+            onCursorChange={(off, line, col) => {
+              setCursorOffset(off);
+              setCursorLineCol({ line, col });
+            }}
+            onTriggerComplete={() => runInference(code, cursorOffset)}
+            height={300}
           />
-          {mode === "fim" && (
-            <div className="mm-fim-suffix-box">
-              <div className="mm-pane-bar">
-                <span>FIM Suffix (Code Below Cursor)</span>
-              </div>
-              <textarea
-                className="mm-suffix-textarea"
-                value={suffix}
-                onChange={(e) => setSuffix(e.target.value)}
-              />
-            </div>
-          )}
         </div>
 
         <div className="mm-results-pane">

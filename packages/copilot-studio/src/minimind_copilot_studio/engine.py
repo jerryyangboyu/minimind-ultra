@@ -209,6 +209,21 @@ class CopilotInferenceEngine:
             model, ids, max_new_tokens=max_new_tokens, repetition_penalty=1.05
         )
 
+    def default_fim_sft_complete(
+        self, model: Any, prefix: str, suffix: str, max_new_tokens: int = 64
+    ) -> str:
+        fim_prompt = f"{FIM_PREFIX}{prefix}{FIM_SUFFIX}{suffix}{FIM_MIDDLE}"
+        prompt = f"<|im_start|>user\n{fim_prompt}\n<|im_end|>\n<|im_start|>assistant"
+        ids = self.tokenizer(prompt, add_special_tokens=False).input_ids
+        text = self._generate_raw(
+            model, ids, max_new_tokens=max_new_tokens, repetition_penalty=1.02
+        )
+        if "</think>" in text:
+            text = text.split("</think>", 1)[1]
+        if text.startswith("\n"):
+            text = text[1:]
+        return text.rstrip("\n")
+
     def default_sft_complete(
         self, model: Any, header: str, max_new_tokens: int = 144
     ) -> str:
@@ -257,22 +272,48 @@ class CopilotInferenceEngine:
     def complete_all(
         self,
         prefix: str,
-        mode: str = "sft",
+        mode: str = "auto",
         suffix: str = "",
         max_new_tokens: int = 144,
     ) -> dict[str, Any]:
-        """Run code completion across all registered checkpoints and return structured metrics."""
+        """Run code completion across all registered checkpoints and return structured metrics.
+
+        Application mode is automatically determined by cursor context when `mode == "auto"`:
+        - `fim`: when `suffix.strip()` is non-empty (cursor is in the middle of code).
+        - `completion`: when `suffix.strip()` is empty (cursor is at the end of code).
+        """
+        effective_mode = (
+            ("fim" if suffix.strip() else "completion")
+            if mode == "auto"
+            else mode
+        )
         models_out: list[dict[str, Any]] = []
         clean_prefix = prefix.rstrip(" \t\n") + "\n"
-        trailing_indent = prefix.split("\n")[-1] if not prefix.split("\n")[-1].strip() else ""
+        trailing_indent = (
+            prefix.split("\n")[-1] if not prefix.split("\n")[-1].strip() else ""
+        )
         for spec in self.checkpoints:
             t0 = time.perf_counter()
-            if mode == "fim":
-                text = self._fim_complete_fn(
-                    spec.model, prefix, suffix, max_new_tokens=min(max_new_tokens, 48)
-                )
+            if effective_mode == "fim":
+                if spec.supports_sft_template:
+                    text = self.default_fim_sft_complete(
+                        spec.model,
+                        prefix,
+                        suffix,
+                        max_new_tokens=min(max_new_tokens, 64),
+                    )
+                else:
+                    text = self._fim_complete_fn(
+                        spec.model,
+                        prefix,
+                        suffix,
+                        max_new_tokens=min(max_new_tokens, 48),
+                    )
                 candidate = prefix + text + suffix
-            elif mode == "sft" and spec.supports_sft_template:
+            elif (
+                effective_mode in ("completion", "sft")
+                and spec.supports_sft_template
+            ):
                 text = self._sft_complete_fn(
                     spec.model, clean_prefix, max_new_tokens=max_new_tokens
                 )
@@ -285,7 +326,11 @@ class CopilotInferenceEngine:
                     candidate = prefix + raw_text
                     text = trailing_indent + raw_text.lstrip(" ")
                 else:
-                    sep = "" if (prefix.endswith("\n") or raw_text.startswith("\n")) else "\n"
+                    sep = (
+                        ""
+                        if (prefix.endswith("\n") or raw_text.startswith("\n"))
+                        else "\n"
+                    )
                     candidate = prefix + sep + raw_text
                     text = raw_text.lstrip("\n")
 
@@ -304,4 +349,4 @@ class CopilotInferenceEngine:
                     "tokens_generated": n_tokens,
                 }
             )
-        return {"mode": mode, "models": models_out}
+        return {"mode": effective_mode, "models": models_out}

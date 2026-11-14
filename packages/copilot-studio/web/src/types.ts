@@ -1,4 +1,4 @@
-export type CompletionMode = "sft" | "l2r" | "fim";
+export type CompletionMode = "auto" | "completion" | "fim";
 
 export interface ModelCompletionResult {
   key: string;
@@ -18,7 +18,6 @@ export interface CompleteResponse {
 export interface PresetItem {
   id: string;
   title: string;
-  mode: CompletionMode;
   prefix: string;
   suffix: string;
 }

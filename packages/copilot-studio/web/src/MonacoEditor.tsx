@@ -2,7 +2,9 @@ import React, { useEffect, useRef } from "react";
 
 interface MonacoEditorProps {
   value: string;
-  onChange: (nextValue: string) => void;
+  cursorOffset?: number;
+  onChange: (nextValue: string, nextCursorOffset: number) => void;
+  onCursorChange?: (offset: number, lineNumber: number, column: number) => void;
   onTriggerComplete: () => void;
   height?: number;
 }
@@ -38,15 +40,19 @@ function ensureMonacoLoaded(): Promise<any> {
 
 export const MonacoEditor: React.FC<MonacoEditorProps> = ({
   value,
+  cursorOffset,
   onChange,
+  onCursorChange,
   onTriggerComplete,
-  height = 270,
+  height = 295,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<any>(null);
   const onChangeRef = useRef(onChange);
+  const onCursorChangeRef = useRef(onCursorChange);
   const onTriggerRef = useRef(onTriggerComplete);
   onChangeRef.current = onChange;
+  onCursorChangeRef.current = onCursorChange;
   onTriggerRef.current = onTriggerComplete;
 
   useEffect(() => {
@@ -68,8 +74,25 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
       });
       editorRef.current = editor;
 
+      const model = editor.getModel();
+      if (model && typeof cursorOffset === "number") {
+        const pos = model.getPositionAt(cursorOffset);
+        editor.setPosition(pos);
+        editor.revealPositionInCenterIfOutsideViewport(pos);
+      }
+
       editor.onDidChangeModelContent(() => {
-        onChangeRef.current(editor.getValue());
+        const m = editor.getModel();
+        const pos = editor.getPosition();
+        const off = m && pos ? m.getOffsetAt(pos) : editor.getValue().length;
+        onChangeRef.current(editor.getValue(), off);
+      });
+
+      editor.onDidChangeCursorPosition((e: any) => {
+        const m = editor.getModel();
+        if (!m || !onCursorChangeRef.current) return;
+        const off = m.getOffsetAt(e.position);
+        onCursorChangeRef.current(off, e.position.lineNumber, e.position.column);
       });
 
       editor.addCommand(
@@ -89,10 +112,21 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
 
   useEffect(() => {
     const editor = editorRef.current;
-    if (editor && editor.getValue() !== value) {
+    if (!editor) return;
+    const model = editor.getModel();
+    if (editor.getValue() !== value) {
       editor.setValue(value);
     }
-  }, [value]);
+    if (model && typeof cursorOffset === "number") {
+      const currentPos = editor.getPosition();
+      const currentOff = currentPos ? model.getOffsetAt(currentPos) : -1;
+      if (currentOff !== cursorOffset) {
+        const nextPos = model.getPositionAt(cursorOffset);
+        editor.setPosition(nextPos);
+        editor.revealPositionInCenterIfOutsideViewport(nextPos);
+      }
+    }
+  }, [value, cursorOffset]);
 
   return (
     <div
