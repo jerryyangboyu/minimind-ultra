@@ -74,6 +74,16 @@ class CopilotInferenceEngine:
         from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 
         disable_progress_bars()
+        hf_token = os.environ.get("HF_TOKEN")
+        if not hf_token:
+            try:
+                from google.colab import userdata  # type: ignore
+                hf_token = userdata.get("HF_TOKEN")
+                if hf_token:
+                    os.environ["HF_TOKEN"] = hf_token
+            except Exception:
+                hf_token = None
+
         dev = device or ("cuda" if torch.cuda.is_available() else "cpu")
         out_dir = os.path.join(minimind_dir, "out")
         os.makedirs(out_dir, exist_ok=True)
@@ -93,6 +103,7 @@ class CopilotInferenceEngine:
                     repo_type="model",
                     filename=fname,
                     local_dir=out_dir,
+                    token=hf_token,
                 )
 
         tokenizer = AutoTokenizer.from_pretrained(os.path.join(minimind_dir, "model"))
